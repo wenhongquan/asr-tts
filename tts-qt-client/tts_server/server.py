@@ -11,7 +11,7 @@ import wave
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from typing import Set, Optional, Tuple, List
+from typing import Set, Optional, Tuple, List, Dict
 import numpy as np
 import websockets
 from websockets.server import WebSocketServerProtocol
@@ -20,24 +20,28 @@ sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
 
 
 class AudioCache:
-    def __init__(self, max_size: int = 100):
-        self.cache = {}
-        self.access_order = []
+    def __init__(self, max_size: int = 200):
+        self.cache: Dict[str, bytes] = {}
+        self.access_order: List[str] = []
         self.max_size = max_size
+        self.hits = 0
+        self.misses = 0
     
-    def _make_key(self, text: str, ref_audio_hash: str) -> str:
-        return hashlib.md5(f"{ref_audio_hash}:{text}".encode()).hexdigest()
+    def _make_key(self, text: str, ref_hash: str) -> str:
+        return hashlib.md5(f"{ref_hash}:{text}".encode()).hexdigest()
     
-    def get(self, text: str, ref_audio_hash: str) -> Optional[bytes]:
-        key = self._make_key(text, ref_audio_hash)
+    def get(self, text: str, ref_hash: str) -> Optional[bytes]:
+        key = self._make_key(text, ref_hash)
         if key in self.cache:
             self.access_order.remove(key)
             self.access_order.append(key)
+            self.hits += 1
             return self.cache[key]
+        self.misses += 1
         return None
     
-    def put(self, text: str, ref_audio_hash: str, audio_data: bytes):
-        key = self._make_key(text, ref_audio_hash)
+    def put(self, text: str, ref_hash: str, audio_data: bytes):
+        key = self._make_key(text, ref_hash)
         if key in self.cache:
             self.access_order.remove(key)
         elif len(self.cache) >= self.max_size:
@@ -45,38 +49,85 @@ class AudioCache:
             del self.cache[oldest]
         self.cache[key] = audio_data
         self.access_order.append(key)
+    
+    def get_stats(self) -> dict:
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        return {
+            'size': len(self.cache),
+            'max_size': self.max_size,
+            'hits': self.hits,
+            'misses': self.misses,
+            'hit_rate': f"{hit_rate:.1f}%"
+        }
 
 
 class TTSEngine:
     def __init__(self, model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base", 
-                 ref_audio_path: str = None, chunk_size: int = 8):
-        from faster_qwen3_tts import FasterQwen3TTS
+                 ref_audio_path: str = None):
+        import soundfile as sf
         
         self.model_id = model_id
         self.sample_rate = 24000
         self.ref_audio_path = ref_audio_path
-        self.ref_audio_hash = None
-        self.chunk_size = chunk_size
-        self.audio_cache = AudioCache(max_size=100)
+        self.ref_hash = None
+        self.audio_cache = AudioCache(max_size=200)
         
-        print(f"Loading FasterQwen3-TTS model: {model_id}")
-        self.model = FasterQwen3TTS.from_pretrained(model_id)
+        print(f"Loading Qwen3-TTS model: {model_id}")
+        from qwen_tts import Qwen3TTSModel
+        self.model = Qwen3TTSModel.from_pretrained(model_id, device_map='mps')
         print("Model loaded successfully")
         
         if self.ref_audio_path and os.path.exists(self.ref_audio_path):
-            self.prompt_items = self._create_prompt(self.ref_audio_path)
-            self.ref_audio_hash = hashlib.md5(open(self.ref_audio_path, 'rb').read()).hexdigest()
+            self.ref_audio, self.ref_sr = self._load_audio(self.ref_audio_path)
+            self.ref_hash = hashlib.md5(open(self.ref_audio_path, 'rb').read()).hexdigest()
+            self.prompt_items = self.model.create_voice_clone_prompt(
+                ref_audio=(self.ref_audio, self.ref_sr),
+                ref_text="",
+                x_vector_only_mode=True
+            )
             print(f"Reference audio loaded: {self.ref_audio_path}")
         else:
+            self.ref_audio = None
+            self.ref_sr = None
             self.prompt_items = None
             print("Warning: No reference audio provided")
     
-    def _create_prompt(self, path: str):
-        return self.model.model.create_voice_clone_prompt(
-            ref_audio=path,
-            ref_text="",
-            x_vector_only_mode=True
+    def _load_audio(self, path: str) -> Tuple[np.ndarray, int]:
+        import soundfile as sf
+        audio, sr = sf.read(path)
+        if len(audio.shape) > 1:
+            audio = audio[:, 0]
+        return audio, sr
+    
+    def synthesize(self, text: str, ref_audio_path: str = None) -> bytes:
+        if ref_audio_path:
+            ref_audio, ref_sr = self._load_audio(ref_audio_path)
+            ref_hash = hashlib.md5(open(ref_audio_path, 'rb').read()).hexdigest()
+            prompt = self.model.create_voice_clone_prompt(
+                ref_audio=(ref_audio, ref_sr),
+                ref_text="",
+                x_vector_only_mode=True
+            )
+        elif self.ref_hash:
+            ref_hash = self.ref_hash
+            prompt = self.prompt_items
+        else:
+            raise ValueError("Reference audio required for Base model")
+        
+        cached = self.audio_cache.get(text, ref_hash)
+        if cached:
+            return cached
+        
+        audio_chunks, sample_rate = self.model.generate_voice_clone(
+            text=text,
+            voice_clone_prompt=prompt,
+            x_vector_only_mode=True,
         )
+        
+        wav_data = self._audio_to_wav(audio_chunks, sample_rate)
+        self.audio_cache.put(text, ref_hash, wav_data)
+        return wav_data
     
     def _audio_to_wav(self, audio_data, sample_rate: int = None) -> bytes:
         if sample_rate is None:
@@ -99,53 +150,14 @@ class TTSEngine:
         
         return wav_io.getvalue()
     
-    def synthesize_streaming(self, text: str, chunk_index: int, 
-                           ref_audio_path: str = None) -> List[Tuple[int, bytes]]:
-        if self.audio_cache.get(text, self.ref_audio_hash or ""):
-            cached = self.audio_cache.get(text, self.ref_audio_hash or "")
-            return [(chunk_index, cached)]
-        
-        if ref_audio_path:
-            prompt = self._create_prompt(ref_audio_path)
-        elif self.prompt_items is not None:
-            prompt = self.prompt_items
-        else:
-            raise ValueError("Reference audio required for Base model")
-        
-        audio_chunks = []
-        for audio_chunk, sr, timing in self.model.generate_voice_clone_streaming(
-            text=text,
-            language="Chinese",
-            voice_clone_prompt=prompt,
-            chunk_size=self.chunk_size,
-            x_vector_only_mode=True,
-        ):
-            wav_data = self._audio_to_wav(audio_chunk, sr)
-            audio_chunks.append((chunk_index, wav_data))
-        
-        if audio_chunks:
-            full_audio = self._audio_to_wav(np.concatenate([
-                np.frombuffer(c[1][44:], dtype=np.int16) for c in audio_chunks
-            ]) if len(audio_chunks) > 1 else np.frombuffer(audio_chunks[0][1][44:], dtype=np.int16), 
-            self.sample_rate)
-            self.audio_cache.put(text, self.ref_audio_hash or "", full_audio)
-        
-        return audio_chunks
-    
-    def synthesize(self, text: str, ref_audio_path: str = None) -> bytes:
-        audio_chunks = self.synthesize_streaming(text, 0, ref_audio_path)
-        if audio_chunks:
-            return audio_chunks[0][1]
-        return b''
-    
     def get_model_info(self) -> dict:
-        return {
+        info = {
             'model_id': self.model_id,
             'sample_rate': self.sample_rate,
-            'has_ref_audio': self.prompt_items is not None,
-            'cache_size': len(self.audio_cache.cache),
-            'streaming': True
+            'has_ref_audio': self.ref_audio is not None,
+            'cache_stats': self.audio_cache.get_stats()
         }
+        return info
 
 
 class TTSServer:
@@ -155,8 +167,7 @@ class TTSServer:
         port: int = 8766,
         host: str = "localhost",
         ref_audio_path: str = None,
-        max_workers: int = 4,
-        chunk_size: int = 8
+        max_workers: int = 4
     ):
         self.port = port
         self.host = host
@@ -164,11 +175,10 @@ class TTSServer:
         self.clients: Set[WebSocketServerProtocol] = set()
         self.is_running = True
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.chunk_size = chunk_size
         
         print(f"Initializing TTS engine...")
-        self.engine = TTSEngine(model_id, ref_audio_path, chunk_size)
-        print(f"TTS Engine ready (max_workers={max_workers}, chunk_size={chunk_size})")
+        self.engine = TTSEngine(model_id, ref_audio_path)
+        print(f"TTS Engine ready (max_workers={max_workers})")
     
     async def register(self, websocket: WebSocketServerProtocol):
         self.clients.add(websocket)
@@ -190,41 +200,30 @@ class TTSServer:
             except websockets.exceptions.ConnectionClosed:
                 await self.unregister(websocket)
     
-    async def send_audio_chunk(self, websocket: WebSocketServerProtocol, 
-                              audio_data: bytes, chunk_index: int, is_first: bool, is_last: bool):
-        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-        await self.send_message(websocket, {
-            "type": "audio",
-            "data": audio_base64,
-            "format": "wav",
-            "sample_rate": self.engine.sample_rate,
-            "chunk_index": chunk_index,
-            "is_first": is_first,
-            "is_last": is_last
-        })
-    
     async def handle_synthesize(self, websocket: WebSocketServerProtocol, 
                                text: str, ref_audio: str = None, chunk_index: int = -1):
         loop = asyncio.get_event_loop()
         try:
-            print(f"Starting streaming synthesis for chunk {chunk_index}: {text[:30]}...")
+            print(f"Starting synthesis for chunk {chunk_index}: {text[:30]}...")
             
-            audio_chunks = await loop.run_in_executor(
+            audio_data = await loop.run_in_executor(
                 self.executor,
-                self.engine.synthesize_streaming,
+                self.engine.synthesize,
                 text,
-                chunk_index,
                 ref_audio
             )
             
-            for i, (_, wav_data) in enumerate(audio_chunks):
-                await self.send_audio_chunk(
-                    websocket, wav_data, chunk_index,
-                    is_first=(i == 0), is_last=(i == len(audio_chunks) - 1)
-                )
-                print(f"Streamed audio chunk {chunk_index}.{i}")
-            
-            print(f"Finished streaming for chunk {chunk_index}")
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            await self.send_message(websocket, {
+                "type": "audio",
+                "data": audio_base64,
+                "format": "wav",
+                "sample_rate": self.engine.sample_rate,
+                "chunk_index": chunk_index,
+                "is_first": True,
+                "is_last": True
+            })
+            print(f"Sent audio for chunk {chunk_index} ({len(audio_data)} bytes)")
             
         except Exception as e:
             print(f"Synthesis error for chunk {chunk_index}: {e}")
@@ -258,10 +257,10 @@ class TTSServer:
             })
         
         elif msg_type == "cache_stats":
+            stats = self.engine.audio_cache.get_stats()
             await self.send_message(websocket, {
                 "type": "cache_stats",
-                "cache_size": len(self.engine.audio_cache.cache),
-                "max_size": self.engine.audio_cache.max_size
+                **stats
             })
     
     async def handler(self, websocket: WebSocketServerProtocol):
@@ -291,14 +290,12 @@ class TTSServer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TTS WebSocket Server (Streaming)")
+    parser = argparse.ArgumentParser(description="TTS WebSocket Server (Optimized with Cache)")
     parser.add_argument("--model", "-m", default="Qwen/Qwen3-TTS-12Hz-0.6B-Base")
     parser.add_argument("--port", "-p", type=int, default=8766)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--ref-audio", "-r", default=None)
     parser.add_argument("--workers", "-w", type=int, default=4)
-    parser.add_argument("--chunk-size", "-c", type=int, default=8,
-                        help="Streaming chunk size (steps). Smaller = lower latency but more overhead")
     
     args = parser.parse_args()
     
@@ -307,8 +304,7 @@ def main():
         port=args.port,
         host=args.host,
         ref_audio_path=args.ref_audio,
-        max_workers=args.workers,
-        chunk_size=args.chunk_size
+        max_workers=args.workers
     )
     
     def signal_handler(sig, frame):
