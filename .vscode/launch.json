@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/tts-qt-client/client",
+      "program": "/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/tts-qt-client/client/build/Debug/outDebug"
+    }
+  ]
+}

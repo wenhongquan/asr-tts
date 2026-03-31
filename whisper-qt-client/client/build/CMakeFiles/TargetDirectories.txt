@@ -1,0 +1,5 @@
+/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/whisper-qt-client/client/build/CMakeFiles/whisper_client.dir
+/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/whisper-qt-client/client/build/CMakeFiles/edit_cache.dir
+/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/whisper-qt-client/client/build/CMakeFiles/rebuild_cache.dir
+/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/whisper-qt-client/client/build/CMakeFiles/whisper_client_autogen_timestamp_deps.dir
+/Users/wenhongquan/Desktop/阿里云同步/项目/dnn/asr/whisper-qt-client/client/build/CMakeFiles/whisper_client_autogen.dir
