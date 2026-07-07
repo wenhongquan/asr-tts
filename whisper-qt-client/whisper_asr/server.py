@@ -202,7 +202,7 @@ def main():
                         help="Whisper model size (for whisper mode)")
     parser.add_argument("--port", "-p", type=int, default=8765,
                         help="Server port")
-    parser.add_argument("--host", default="localhost",
+    parser.add_argument("--host", default="0.0.0.0",
                         help="Server host")
     parser.add_argument("--language", "-l", default=None,
                         help="Target language code (None for auto)")
