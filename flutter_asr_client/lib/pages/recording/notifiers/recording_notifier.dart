@@ -214,16 +214,15 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
 
   void _startAudioSendTimer() {
     _audioSendTimer?.cancel();
-    _audioSendTimer = Timer.periodic(AppConstants.audioSendInterval, (_) async {
+    _audioSendTimer = Timer.periodic(AppConstants.audioSendInterval, (_) {
       if (!(state.value?.isRecording ?? false) || _isSendingAudio) return;
       _isSendingAudio = true;
       try {
-        final chunk = await _audioCaptureService.readLatestChunkAsBase64();
-        if (chunk.isNotEmpty) {
-          _webSocketService.send(AudioMessage(data: chunk));
+        final bytes = _audioCaptureService.takeBuffer();
+        if (bytes != null && bytes.isNotEmpty) {
+          _webSocketService.sendBinary(bytes);
         }
       } on Exception catch (_) {
-        // Swallow single chunk errors; the next tick will retry.
       } finally {
         _isSendingAudio = false;
       }
@@ -239,11 +238,14 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
 
   void _listenToWebSocketMessages() {
     _webSocketService.messageStream.listen((message) {
+      print('[ws] msg: ${message.runtimeType} ${message is TranscriptMessage ? "text='${message.text}'" : ""}');
       switch (message) {
         case ConnectedMessage():
           _updateState((s) => s.copyWith(isConnected: true));
         case TranscriptMessage(:final text):
-          _addTranscript(text);
+          if (text.isNotEmpty) {
+            _addTranscript(text);
+          }
         case ErrorMessage(:final message):
           _updateState((s) => s.copyWith(errorMessage: message));
         case ClearedMessage():

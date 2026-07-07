@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:asr_client/models/websocket_message.dart';
 import 'package:asr_client/services/audio_capture_service.dart';
@@ -54,6 +55,11 @@ class FakeWebSocketService implements ws.WebSocketService {
   }
 
   @override
+  void sendBinary(List<int> bytes) {
+    // no-op for tests
+  }
+
+  @override
   void disconnect() {
     _state = ws.ConnectionState.disconnected;
   }
@@ -67,7 +73,7 @@ class FakeWebSocketService implements ws.WebSocketService {
 class FakeAudioCaptureService implements AudioCaptureService {
   final _levelController = StreamController<double>.broadcast();
   var _recording = false;
-  String chunkData = '';
+  Uint8List? pendingBytes;
 
   @override
   Stream<double> get audioLevelStream => _levelController.stream;
@@ -95,9 +101,11 @@ class FakeAudioCaptureService implements AudioCaptureService {
   }
 
   @override
-  Future<String> readLatestChunkAsBase64() async {
-    if (chunkData.isEmpty || !_recording) return '';
-    return chunkData;
+  Uint8List? takeBuffer() {
+    if (!_recording) return null;
+    final data = pendingBytes;
+    pendingBytes = null;
+    return data;
   }
 
   @override

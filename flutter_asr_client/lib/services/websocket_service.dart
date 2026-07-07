@@ -20,6 +20,7 @@ abstract interface class WebSocketService {
 
   Future<void> connect(String url);
   void send(WebSocketMessage message);
+  void sendBinary(List<int> bytes);
   void disconnect();
 }
 
@@ -75,6 +76,7 @@ final class WebSocketServiceImpl implements WebSocketService {
       _channel!.stream.listen(
         (event) {
           if (event is String) {
+            print('[ws-raw] $event');
             final message = ServerMessage.fromJsonString(event);
             _messageController.add(message);
           }
@@ -135,6 +137,13 @@ final class WebSocketServiceImpl implements WebSocketService {
   void send(WebSocketMessage message) {
     if (_channel != null && _lastState == ConnectionState.connected) {
       _channel!.sink.add(message.toJsonString());
+    }
+  }
+
+  @override
+  void sendBinary(List<int> bytes) {
+    if (_channel != null && _lastState == ConnectionState.connected) {
+      _channel!.sink.add(bytes);
     }
   }
 
