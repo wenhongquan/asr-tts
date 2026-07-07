@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -104,7 +105,7 @@ final class WebSocketServiceImpl implements WebSocketService {
   void _startPingTimer() {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(AppConstants.pingInterval, (_) {
-      _channel?.sink.add('ping');
+      _channel?.sink.add(jsonEncode({'type': 'ping'}));
     });
   }
 

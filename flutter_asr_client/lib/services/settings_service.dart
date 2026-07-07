@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:asr_client/common/constants.dart';
 
@@ -23,7 +25,15 @@ final class SharedPreferencesSettingsService implements SettingsService {
   @override
   Future<String> getHost() async {
     final prefs = await _preferences;
-    return prefs.getString(_hostKey) ?? AppConstants.defaultHost;
+    final raw = prefs.getString(_hostKey);
+    if (raw == null || raw.trim().isEmpty) return AppConstants.defaultHost;
+    // `localhost` does not resolve reliably on Android and triggers
+    // "no address associated with hostname". Map it to the emulator's
+    // host-loopback alias so a previously saved `localhost` still works.
+    if (raw.trim().toLowerCase() == 'localhost' && Platform.isAndroid) {
+      return '10.0.2.2';
+    }
+    return raw.trim();
   }
 
   @override

@@ -17,6 +17,11 @@ import 'package:asr_client/services/websocket_service.dart';
 enum RecordingStatus { idle, recording, paused, ending }
 
 @immutable
+const _unset = _Unset();
+final class _Unset {
+  const _Unset();
+}
+
 final class RecordingState {
   const RecordingState({
     this.status = RecordingStatus.idle,
@@ -48,11 +53,11 @@ final class RecordingState {
     double? audioLevel,
     List<ConversationItem>? items,
     bool? isConnected,
-    String? errorMessage,
-    String? sessionId,
-    String? projectName,
-    String? taskName,
-    String? templateName,
+    Object? errorMessage = _unset,
+    Object? sessionId = _unset,
+    Object? projectName = _unset,
+    Object? taskName = _unset,
+    Object? templateName = _unset,
   }) {
     return RecordingState(
       status: status ?? this.status,
@@ -60,11 +65,17 @@ final class RecordingState {
       audioLevel: audioLevel ?? this.audioLevel,
       items: items ?? this.items,
       isConnected: isConnected ?? this.isConnected,
-      errorMessage: errorMessage ?? this.errorMessage,
-      sessionId: sessionId ?? this.sessionId,
-      projectName: projectName ?? this.projectName,
-      taskName: taskName ?? this.taskName,
-      templateName: templateName ?? this.templateName,
+      errorMessage:
+          identical(errorMessage, _unset) ? this.errorMessage : errorMessage as String?,
+      sessionId:
+          identical(sessionId, _unset) ? this.sessionId : sessionId as String?,
+      projectName: identical(projectName, _unset)
+          ? this.projectName
+          : projectName as String?,
+      taskName: identical(taskName, _unset) ? this.taskName : taskName as String?,
+      templateName: identical(templateName, _unset)
+          ? this.templateName
+          : templateName as String?,
     );
   }
 
@@ -107,6 +118,15 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     );
 
     await _connectWebSocket();
+    if (_webSocketService.currentState != ConnectionState.connected) {
+      state = AsyncData(
+        initialState.copyWith(
+          status: RecordingStatus.idle,
+          errorMessage: '无法连接服务器，请检查服务端地址与网络后重试',
+        ),
+      );
+      return state.value ?? initialState;
+    }
     await _startRecording(initialState);
     return state.value ?? initialState;
   }
