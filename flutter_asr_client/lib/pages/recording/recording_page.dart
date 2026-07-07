@@ -224,7 +224,11 @@ class _RecordingBody extends ConsumerWidget {
                   templateName: state.templateName ?? '',
                 ),
                 const SizedBox(height: 8),
-                ConversationList(items: state.items),
+                ConversationList(
+                  items: state.items,
+                  liveUtterance: state.liveUtterance,
+                  isRecording: state.isRecording,
+                ),
               ],
             ),
           ),

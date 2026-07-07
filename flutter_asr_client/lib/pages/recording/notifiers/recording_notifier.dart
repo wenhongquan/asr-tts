@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:asr_client/common/constants.dart';
@@ -28,6 +27,7 @@ final class RecordingState {
     this.elapsed = Duration.zero,
     this.audioLevel = 0.0,
     this.items = const [],
+    this.liveUtterance,
     this.isConnected = false,
     this.errorMessage,
     this.sessionId,
@@ -40,6 +40,7 @@ final class RecordingState {
   final Duration elapsed;
   final double audioLevel;
   final List<ConversationItem> items;
+  final String? liveUtterance;
   final bool isConnected;
   final String? errorMessage;
   final String? sessionId;
@@ -52,6 +53,7 @@ final class RecordingState {
     Duration? elapsed,
     double? audioLevel,
     List<ConversationItem>? items,
+    Object? liveUtterance = _unset,
     bool? isConnected,
     Object? errorMessage = _unset,
     Object? sessionId = _unset,
@@ -64,6 +66,9 @@ final class RecordingState {
       elapsed: elapsed ?? this.elapsed,
       audioLevel: audioLevel ?? this.audioLevel,
       items: items ?? this.items,
+      liveUtterance: identical(liveUtterance, _unset)
+          ? this.liveUtterance
+          : liveUtterance as String?,
       isConnected: isConnected ?? this.isConnected,
       errorMessage:
           identical(errorMessage, _unset) ? this.errorMessage : errorMessage as String?,
@@ -97,6 +102,19 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
   Duration _accumulated = Duration.zero;
   var _isSendingAudio = false;
 
+  /// Tracks the last raw transcript from server.
+  String _lastSeenText = '';
+
+  /// Accumulated full utterance, built by merging overlapping transcripts.
+  String _accumulatedText = '';
+
+  /// Consecutive times the same text was received (no ASR change).
+  int _sameCount = 0;
+
+  Timer? _utteranceTimer;
+
+  static const _utteranceSilence = Duration(seconds: 3);
+
   WebSocketService get _webSocketService => ref.read(webSocketServiceProvider);
 
   AudioCaptureService get _audioCaptureService =>
@@ -108,6 +126,7 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
       _timer?.cancel();
       _transcribeTimer?.cancel();
       _audioSendTimer?.cancel();
+      _utteranceTimer?.cancel();
     });
 
     final initialState = const RecordingState(
@@ -254,81 +273,65 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
   }
 
   void _addTranscript(String text) {
-    final now = DateTime.now();
-    final timeStr = DateFormat('HH:mm').format(now);
+    if (text.isEmpty) return;
 
-    _updateState(
-      (s) => s.copyWith(
-        items: [
-          ...s.items,
-          ConversationItem(
-            id: _uuid.v4(),
-            type: ConversationItemType.userBubble,
-            timestamp: now,
-            text: text,
-          ),
-          _buildAiResponse(text, now, timeStr),
-        ],
-      ),
-    );
+    _accumulatedText = _stitch(_accumulatedText, text);
+    _updateState((s) => s.copyWith(liveUtterance: _accumulatedText));
+
+    if (text == _lastSeenText) {
+      _sameCount++;
+      if (_sameCount >= 2 && _utteranceTimer == null) {
+        // Text hasn't changed for 2+ intervals → user paused.
+        _utteranceTimer = Timer(_utteranceSilence, _finalizeUtterance);
+      }
+      return;
+    }
+    // New or corrected text → user still speaking.
+    _sameCount = 0;
+    _lastSeenText = text;
+    _utteranceTimer?.cancel();
+    _utteranceTimer = null;
   }
 
-  ConversationItem _buildAiResponse(
-    String text,
-    DateTime time,
-    String timeStr,
-  ) {
-    if (text.contains('坍落度')) {
-      return ConversationItem(
-        id: _uuid.v4(),
-        type: ConversationItemType.aiCard,
-        timestamp: time,
-        aiLabel: 'AI',
-        aiSubLabel: '结构化 · 已校验',
-        fields: [
-          const AiField(key: '指标', value: '坍落度'),
-          const AiField(key: '仪器', value: '坍落度筒'),
-          const AiField(key: '实测', value: '180 mm'),
-          const AiField(key: '合格区间', value: '160 – 220 mm'),
-        ],
-        verdict: '✓ 合格 · 落在标准区间内',
-        verdictStatus: AiVerdictStatus.ok,
-        actions: const [
-          AiAction(label: '采纳入库', isPrimary: true),
-          AiAction(label: '修正'),
-        ],
-      );
+  /// Stitches [previous] with [next] by finding their longest suffix–prefix
+  /// overlap. If no overlap exists, [next] is a new utterance — finalize
+  /// [previous] and return [next] alone.
+  String _stitch(String previous, String next) {
+    if (previous.isEmpty) return next;
+    if (next.startsWith(previous)) return next;
+
+    // Find the longest suffix of `previous` that matches a prefix of `next`.
+    for (var n = next.length; n > 0; n--) {
+      final needle = next.substring(0, n);
+      if (previous.endsWith(needle)) {
+        return previous + next.substring(n);
+      }
     }
 
-    if (text.contains('扩展度')) {
-      return ConversationItem(
-        id: _uuid.v4(),
-        type: ConversationItemType.aiCard,
-        timestamp: time,
-        aiLabel: 'AI',
-        aiSubLabel: '结构化 · 需复核',
-        fields: [
-          const AiField(key: '指标', value: '扩展度'),
-          const AiField(key: '实测', value: '545 mm'),
-          const AiField(key: '单位', value: '未口述，已默认 mm', highlight: true),
-        ],
-        verdict: '! 请确认单位，或补充坍落度等级判定',
-        verdictStatus: AiVerdictStatus.warn,
-        actions: const [
-          AiAction(label: '确认 mm', isPrimary: true),
-          AiAction(label: '修正'),
-        ],
-      );
-    }
+    // No overlap: ASR reset. Finalize old, start new.
+    _finalizeUtterance();
+    return next;
+  }
 
-    return ConversationItem(
+  void _finalizeUtterance() {
+    _utteranceTimer?.cancel();
+    _utteranceTimer = null;
+    final text = _accumulatedText.trim();
+    _accumulatedText = '';
+    _lastSeenText = '';
+    _sameCount = 0;
+    if (text.isEmpty) return;
+
+    final item = ConversationItem(
       id: _uuid.v4(),
-      type: ConversationItemType.aiCard,
-      timestamp: time,
-      aiLabel: 'AI',
-      aiSubLabel: '已识别 · 上下文绑定',
-      text: '已收到语音输入：$text',
+      type: ConversationItemType.userBubble,
+      timestamp: DateTime.now(),
+      text: text,
     );
+    _updateState((s) => s.copyWith(
+      items: [...s.items, item],
+      liveUtterance: null,
+    ));
   }
 
   void pauseRecording() {
@@ -338,7 +341,11 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     _transcribeTimer?.cancel();
     _audioSendTimer?.cancel();
     _audioCaptureService.stopRecording();
-    _updateState((s) => s.copyWith(status: RecordingStatus.paused));
+    _finalizeUtterance();
+    _updateState((s) => s.copyWith(
+      status: RecordingStatus.paused,
+      liveUtterance: null,
+    ));
   }
 
   Future<void> resumeRecording() async {
@@ -367,6 +374,10 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     _timer?.cancel();
     _transcribeTimer?.cancel();
     _audioSendTimer?.cancel();
+    final live = state.value?.liveUtterance?.trim();
+    if (live != null && live.isNotEmpty) {
+      _finalizeUtterance();
+    }
     await _audioCaptureService.stopRecording();
     _webSocketService.disconnect();
     _updateState(
@@ -374,6 +385,7 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
         status: RecordingStatus.idle,
         elapsed: Duration.zero,
         items: [],
+        liveUtterance: null,
         isConnected: false,
       ),
     );
