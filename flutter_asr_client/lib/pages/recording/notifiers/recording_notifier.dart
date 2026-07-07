@@ -117,7 +117,17 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
       templateName: '模板 · 普通混凝土坍落度 GB/T 50080',
     );
 
-    await _connectWebSocket();
+    try {
+      await _connectWebSocket();
+    } on Exception catch (e) {
+      state = AsyncData(
+        initialState.copyWith(
+          status: RecordingStatus.idle,
+          errorMessage: '无法连接服务器: $e',
+        ),
+      );
+      return state.value ?? initialState;
+    }
     if (_webSocketService.currentState != ConnectionState.connected) {
       state = AsyncData(
         initialState.copyWith(
@@ -128,6 +138,12 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
       return state.value ?? initialState;
     }
     await _startRecording(initialState);
+    // Also set isConnected from the actual WebSocket state, because the
+    // server's 'connected' message may have arrived before the listener was
+    // attached (broadcast stream doesn't buffer).
+    if (_webSocketService.currentState == ConnectionState.connected) {
+      _updateState((s) => s.copyWith(isConnected: true));
+    }
     return state.value ?? initialState;
   }
 
@@ -140,10 +156,17 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     try {
       final hasPermission = await _audioCaptureService.requestPermission();
       if (!hasPermission) {
+        final permanentlyDenied =
+            await _audioCaptureService.isPermissionPermanentlyDenied;
+        if (permanentlyDenied) {
+          await _audioCaptureService.openSettings();
+        }
         state = AsyncData(
           initialState.copyWith(
             status: RecordingStatus.idle,
-            errorMessage: '需要麦克风权限才能进行录音',
+            errorMessage: permanentlyDenied
+                ? '麦克风权限被拒绝，请在系统设置中开启后重试'
+                : '需要麦克风权限才能进行录音',
           ),
         );
         return;

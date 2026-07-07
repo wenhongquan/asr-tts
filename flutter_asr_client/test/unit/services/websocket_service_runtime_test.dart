@@ -38,7 +38,7 @@ void main() {
         markTestSkipped('ASR server is not running on localhost:8765');
       }
 
-      await service.connect('ws://192.168.199.195:8765');
+      await service.connect('ws://127.0.0.1:8765');
 
       final connected = await service.messageStream
           .firstWhere((msg) => msg is ConnectedMessage)

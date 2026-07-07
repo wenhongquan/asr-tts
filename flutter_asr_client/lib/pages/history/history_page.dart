@@ -35,7 +35,7 @@ class HistoryPage extends ConsumerWidget {
         children: [
           Container(
             color: AppColors.card,
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
             child: const FilterChips(),
           ),
           Expanded(

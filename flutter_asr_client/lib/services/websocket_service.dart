@@ -61,10 +61,10 @@ final class WebSocketServiceImpl implements WebSocketService {
     }
     _currentUrl = url;
     _shouldReconnect = true;
-    await _connectInternal(url);
+    await _connectInternal(url, rethrowError: true);
   }
 
-  Future<void> _connectInternal(String url) async {
+  Future<void> _connectInternal(String url, {bool rethrowError = false}) async {
     _setState(ConnectionState.connecting);
     try {
       final socket = await WebSocket.connect(
@@ -98,6 +98,7 @@ final class WebSocketServiceImpl implements WebSocketService {
     } on Exception catch (e) {
       _setState(ConnectionState.error);
       _messageController.add(ErrorMessage(message: 'Connection failed: $e'));
+      if (rethrowError) rethrow;
       _scheduleReconnect();
     }
   }
@@ -125,7 +126,7 @@ final class WebSocketServiceImpl implements WebSocketService {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
       if (_shouldReconnect && _currentUrl != null) {
-        unawaited(_connectInternal(_currentUrl!));
+        unawaited(_connectInternal(_currentUrl!, rethrowError: false));
       }
     });
   }

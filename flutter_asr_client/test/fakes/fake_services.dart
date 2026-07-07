@@ -79,6 +79,12 @@ class FakeAudioCaptureService implements AudioCaptureService {
   Future<bool> requestPermission() async => true;
 
   @override
+  Future<bool> get isPermissionPermanentlyDenied async => false;
+
+  @override
+  Future<void> openSettings() async {}
+
+  @override
   Future<void> startRecording() async {
     _recording = true;
   }

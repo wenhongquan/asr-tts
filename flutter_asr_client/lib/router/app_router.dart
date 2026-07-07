@@ -6,6 +6,7 @@ import 'package:asr_client/pages/tasks/tasks_page.dart';
 import 'package:asr_client/pages/history/history_page.dart';
 import 'package:asr_client/pages/profile/profile_page.dart';
 import 'package:asr_client/pages/recording/recording_page.dart';
+import 'package:asr_client/pages/reports/reports_page.dart';
 
 final GlobalKey<NavigatorState> _rootNavKey = GlobalKey<NavigatorState>();
 
@@ -39,7 +40,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/reports',
-                builder: (context, state) => const HistoryPage(),
+                builder: (context, state) => const ReportsPage(),
               ),
             ],
           ),

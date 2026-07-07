@@ -10,6 +10,8 @@ import 'package:asr_client/common/constants.dart';
 abstract interface class AudioCaptureService {
   Stream<double> get audioLevelStream;
   Future<bool> requestPermission();
+  Future<bool> get isPermissionPermanentlyDenied;
+  Future<void> openSettings();
   Future<void> startRecording();
   Future<void> stopRecording();
   Future<String> readLatestChunkAsBase64();
@@ -36,9 +38,25 @@ final class AudioCaptureServiceImpl implements AudioCaptureService {
 
   @override
   Future<bool> requestPermission() async {
+    // Use record's native hasPermission() which reads AVAudioSession directly.
+    // permission_handler is broken on iOS 18 Simulator (always returns
+    // permanentlyDenied even when TCC.db shows granted).
+    final hasPermission = await _recorder.hasPermission();
+    if (hasPermission) return true;
+
+    // Fallback: trigger permission_handler to show the system dialog.
     final status = await Permission.microphone.request();
-    return status.isGranted;
+    if (status.isGranted) return true;
+
+    // Last resort: re-check record in case the dialog just granted it.
+    return await _recorder.hasPermission();
   }
+
+  @override
+  Future<bool> get isPermissionPermanentlyDenied async => false;
+
+  @override
+  Future<void> openSettings() => openAppSettings();
 
   @override
   Future<void> startRecording() async {

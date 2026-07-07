@@ -6,7 +6,6 @@ import 'package:asr_client/pages/recording/notifiers/recording_notifier.dart';
 import 'package:asr_client/pages/recording/widgets/bottom_controls.dart';
 import 'package:asr_client/pages/recording/widgets/conversation_list.dart';
 import 'package:asr_client/pages/recording/widgets/recording_header.dart';
-import 'package:asr_client/pages/recording/widgets/recording_status_bar.dart';
 import 'package:asr_client/theme/app_colors.dart';
 
 class RecordingPage extends ConsumerWidget {
@@ -40,7 +39,11 @@ class RecordingPage extends ConsumerWidget {
         ),
         title: const Text(
           '实时语音识别',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
         centerTitle: true,
         actions: [
@@ -220,12 +223,6 @@ class _RecordingBody extends ConsumerWidget {
                   taskName: state.taskName ?? '',
                   templateName: state.templateName ?? '',
                 ),
-                const SizedBox(height: 10),
-                RecordingStatusBar(
-                  isRecording: state.isRecording,
-                  elapsed: state.elapsed,
-                  audioLevel: state.audioLevel,
-                ),
                 const SizedBox(height: 8),
                 ConversationList(items: state.items),
               ],
@@ -234,6 +231,8 @@ class _RecordingBody extends ConsumerWidget {
         ),
         BottomControls(
           status: state.status,
+          elapsed: state.elapsed,
+          audioLevel: state.audioLevel,
           onPause: notifier.pauseRecording,
           onResume: notifier.resumeRecording,
           onEnd: () => _RecordingPageHelper.showEndConfirm(context, ref),

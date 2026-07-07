@@ -138,27 +138,29 @@ class _FabButton extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Center(
-          child: Container(
-            width: 52,
-            height: 52,
-            margin: const EdgeInsets.only(top: 22),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [AppColors.app, AppColors.appDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: AppColors.card, width: 3),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.app.withValues(alpha: 0.6),
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
+          child: Transform.translate(
+            offset: const Offset(0, -16),
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  colors: [AppColors.app, AppColors.appDark],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-              ],
+                border: Border.all(color: AppColors.card, width: 3),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.app.withValues(alpha: 0.6),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.add, color: Colors.white, size: 32),
             ),
-            child: const Icon(Icons.add, color: Colors.white, size: 24),
           ),
         ),
       ),
