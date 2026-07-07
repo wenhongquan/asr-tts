@@ -76,7 +76,6 @@ final class WebSocketServiceImpl implements WebSocketService {
       _channel!.stream.listen(
         (event) {
           if (event is String) {
-            print('[ws-raw] $event');
             final message = ServerMessage.fromJsonString(event);
             _messageController.add(message);
           }

@@ -238,7 +238,6 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
 
   void _listenToWebSocketMessages() {
     _webSocketService.messageStream.listen((message) {
-      print('[ws] msg: ${message.runtimeType} ${message is TranscriptMessage ? "text='${message.text}'" : ""}');
       switch (message) {
         case ConnectedMessage():
           _updateState((s) => s.copyWith(isConnected: true));
