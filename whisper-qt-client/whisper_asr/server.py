@@ -14,6 +14,7 @@ from websockets.server import WebSocketServerProtocol
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
 
 from .audio_processor import AudioBuffer
+from .transcript_processor import TranscriptProcessor
 
 try:
     from .qwen_engine import QwenASREngine
@@ -44,6 +45,7 @@ class ASRServer:
         self.model_type = model_type
         self.clients: Set[WebSocketServerProtocol] = set()
         self.client_buffers: dict = {}
+        self.client_processors: dict = {}
         self.is_running = True
         
         print(f"Initializing {model_type.upper()} ASR engine...")
@@ -71,6 +73,7 @@ class ASRServer:
             max_duration=self.buffer_duration,
             sample_rate=16000
         )
+        self.client_processors[id(websocket)] = TranscriptProcessor()
         print(f"Client connected: {websocket.remote_address}")
         
         await self.send_message(websocket, {
@@ -81,6 +84,7 @@ class ASRServer:
     async def unregister(self, websocket: WebSocketServerProtocol):
         self.clients.remove(websocket)
         self.client_buffers.pop(id(websocket), None)
+        self.client_processors.pop(id(websocket), None)
         print(f"Client disconnected: {websocket.remote_address}")
     
     async def send_message(self, websocket: WebSocketServerProtocol, message: dict):
@@ -131,20 +135,17 @@ class ASRServer:
                     
         elif msg_type == "transcribe":
             client_buffer = self.client_buffers.get(id(websocket))
-            if client_buffer:
+            processor = self.client_processors.get(id(websocket))
+            if client_buffer and processor:
                 audio = client_buffer.get_last(self.buffer_duration)
-                print(f"Transcribe request: {len(audio)} samples in buffer")
                 if len(audio) > 1600:
                     try:
-                        print("Starting transcription...")
                         result = self.engine.transcribe_array(audio)
-                        print(f"Transcription result: {result['text']}")
-                        await self.send_message(websocket, {
-                            "type": "transcript",
-                            "text": result["text"],
-                            "language": result["language"],
-                            "segments": result.get("segments", [])
-                        })
+                        raw_text = result["text"].strip()
+                        if raw_text:
+                            out = processor.feed(raw_text)
+                            if out is not None:
+                                await self.send_message(websocket, out)
                     except Exception as e:
                         print(f"Transcription error: {e}")
                         import traceback
@@ -158,7 +159,18 @@ class ASRServer:
             client_buffer = self.client_buffers.get(id(websocket))
             if client_buffer:
                 client_buffer.clear()
+            processor = self.client_processors.get(id(websocket))
+            if processor:
+                processor = TranscriptProcessor()
+                self.client_processors[id(websocket)] = processor
             await self.send_message(websocket, {"type": "cleared"})
+        
+        elif msg_type == "finalize":
+            processor = self.client_processors.get(id(websocket))
+            if processor:
+                out = processor.finalize()
+                if out is not None:
+                    await self.send_message(websocket, out)
     
     async def handler(self, websocket: WebSocketServerProtocol):
         await self.register(websocket)

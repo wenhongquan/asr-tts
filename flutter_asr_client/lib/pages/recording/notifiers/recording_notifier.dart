@@ -102,19 +102,6 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
   Duration _accumulated = Duration.zero;
   var _isSendingAudio = false;
 
-  /// Tracks the last raw transcript from server.
-  String _lastSeenText = '';
-
-  /// Accumulated full utterance, built by merging overlapping transcripts.
-  String _accumulatedText = '';
-
-  /// Consecutive times the same text was received (no ASR change).
-  int _sameCount = 0;
-
-  Timer? _utteranceTimer;
-
-  static const _utteranceSilence = Duration(seconds: 3);
-
   WebSocketService get _webSocketService => ref.read(webSocketServiceProvider);
 
   AudioCaptureService get _audioCaptureService =>
@@ -126,7 +113,6 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
       _timer?.cancel();
       _transcribeTimer?.cancel();
       _audioSendTimer?.cancel();
-      _utteranceTimer?.cancel();
     });
 
     final initialState = const RecordingState(
@@ -260,10 +246,10 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
       switch (message) {
         case ConnectedMessage():
           _updateState((s) => s.copyWith(isConnected: true));
-        case TranscriptMessage(:final text):
-          if (text.isNotEmpty) {
-            _addTranscript(text);
-          }
+        case PartialMessage(:final text):
+          _updateState((s) => s.copyWith(liveUtterance: text));
+        case UtteranceMessage(:final text):
+          _finalizeBubble(text);
         case ErrorMessage(:final message):
           _updateState((s) => s.copyWith(errorMessage: message));
         case ClearedMessage():
@@ -272,56 +258,8 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     }, onError: (_) {});
   }
 
-  void _addTranscript(String text) {
-    if (text.isEmpty) return;
-
-    _accumulatedText = _stitch(_accumulatedText, text);
-    _updateState((s) => s.copyWith(liveUtterance: _accumulatedText));
-
-    if (text == _lastSeenText) {
-      _sameCount++;
-      if (_sameCount >= 2 && _utteranceTimer == null) {
-        // Text hasn't changed for 2+ intervals → user paused.
-        _utteranceTimer = Timer(_utteranceSilence, _finalizeUtterance);
-      }
-      return;
-    }
-    // New or corrected text → user still speaking.
-    _sameCount = 0;
-    _lastSeenText = text;
-    _utteranceTimer?.cancel();
-    _utteranceTimer = null;
-  }
-
-  /// Stitches [previous] with [next] by finding their longest suffix–prefix
-  /// overlap. If no overlap exists, [next] is a new utterance — finalize
-  /// [previous] and return [next] alone.
-  String _stitch(String previous, String next) {
-    if (previous.isEmpty) return next;
-    if (next.startsWith(previous)) return next;
-
-    // Find the longest suffix of `previous` that matches a prefix of `next`.
-    for (var n = next.length; n > 0; n--) {
-      final needle = next.substring(0, n);
-      if (previous.endsWith(needle)) {
-        return previous + next.substring(n);
-      }
-    }
-
-    // No overlap: ASR reset. Finalize old, start new.
-    _finalizeUtterance();
-    return next;
-  }
-
-  void _finalizeUtterance() {
-    _utteranceTimer?.cancel();
-    _utteranceTimer = null;
-    final text = _accumulatedText.trim();
-    _accumulatedText = '';
-    _lastSeenText = '';
-    _sameCount = 0;
-    if (text.isEmpty) return;
-
+  void _finalizeBubble(String text) {
+    if (text.trim().isEmpty) return;
     final item = ConversationItem(
       id: _uuid.v4(),
       type: ConversationItemType.userBubble,
@@ -341,7 +279,8 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     _transcribeTimer?.cancel();
     _audioSendTimer?.cancel();
     _audioCaptureService.stopRecording();
-    _finalizeUtterance();
+    _webSocketService.send(const FinalizeMessage());
+    // Let any final utterance message from server arrive before clearing UI.
     _updateState((s) => s.copyWith(
       status: RecordingStatus.paused,
       liveUtterance: null,
@@ -374,10 +313,7 @@ final class RecordingNotifier extends AutoDisposeAsyncNotifier<RecordingState> {
     _timer?.cancel();
     _transcribeTimer?.cancel();
     _audioSendTimer?.cancel();
-    final live = state.value?.liveUtterance?.trim();
-    if (live != null && live.isNotEmpty) {
-      _finalizeUtterance();
-    }
+    _webSocketService.send(const FinalizeMessage());
     await _audioCaptureService.stopRecording();
     _webSocketService.disconnect();
     _updateState(

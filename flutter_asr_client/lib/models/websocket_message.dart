@@ -31,6 +31,13 @@ final class ClearMessage extends WebSocketMessage {
   Map<String, dynamic> toJson() => {'type': 'clear'};
 }
 
+final class FinalizeMessage extends WebSocketMessage {
+  const FinalizeMessage();
+
+  @override
+  Map<String, dynamic> toJson() => {'type': 'finalize'};
+}
+
 sealed class ServerMessage {
   const ServerMessage();
 
@@ -41,10 +48,15 @@ sealed class ServerMessage {
         return ConnectedMessage(
           model: json['model'] as Map<String, dynamic>? ?? const {},
         );
-      case 'transcript':
-        return TranscriptMessage(
+      case 'partial':
+        return PartialMessage(
           text: json['text'] as String? ?? '',
-          language: json['language'] as String?,
+          seq: json['seq'] as int? ?? 0,
+        );
+      case 'utterance':
+        return UtteranceMessage(
+          text: json['text'] as String? ?? '',
+          seq: json['seq'] as int? ?? 0,
         );
       case 'cleared':
         return const ClearedMessage();
@@ -73,11 +85,18 @@ final class ConnectedMessage extends ServerMessage {
   final Map<String, dynamic> model;
 }
 
-final class TranscriptMessage extends ServerMessage {
-  const TranscriptMessage({required this.text, this.language});
+final class PartialMessage extends ServerMessage {
+  const PartialMessage({required this.text, this.seq = 0});
 
   final String text;
-  final String? language;
+  final int seq;
+}
+
+final class UtteranceMessage extends ServerMessage {
+  const UtteranceMessage({required this.text, this.seq = 0});
+
+  final String text;
+  final int seq;
 }
 
 final class ClearedMessage extends ServerMessage {
