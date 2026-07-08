@@ -143,9 +143,9 @@ class ASRServer:
                         result = self.engine.transcribe_array(audio)
                         raw_text = result["text"].strip()
                         if raw_text:
-                            out = processor.feed(raw_text)
-                            if out is not None:
-                                await self.send_message(websocket, out)
+                            messages = processor.feed(raw_text)
+                            for msg in messages:
+                                await self.send_message(websocket, msg)
                     except Exception as e:
                         print(f"Transcription error: {e}")
                         import traceback
@@ -168,9 +168,9 @@ class ASRServer:
         elif msg_type == "finalize":
             processor = self.client_processors.get(id(websocket))
             if processor:
-                out = processor.finalize()
-                if out is not None:
-                    await self.send_message(websocket, out)
+                messages = processor.finalize()
+                for msg in messages:
+                    await self.send_message(websocket, msg)
     
     async def handler(self, websocket: WebSocketServerProtocol):
         await self.register(websocket)
